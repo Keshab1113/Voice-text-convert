@@ -16,33 +16,25 @@ export default function JoinMeeting() {
     const run = async () => {
       const sock = io(API_BASE, { transports: ['websocket'] });
       socketRef.current = sock;
-
-      // Try to get device label
       let deviceLabel = navigator.userAgent;
       try {
         const streamTmp = await navigator.mediaDevices.getUserMedia({ audio:true });
         const track = streamTmp.getAudioTracks()[0];
         deviceLabel = track.label || deviceLabel;
         streamTmp.getTracks().forEach(t=>t.stop());
-      } catch {}
-
+      } catch(error) {
+        console.log("Error from JoinMeeting.jsx: ",error);
+      }
       sock.emit('guest:request-join', { roomId, name: 'Guest', deviceLabel });
-
       sock.on('guest:approved', async () => {
         setStatus('Approved. Connecting…');
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
         const pc = new RTCPeerConnection({ iceServers: ICE });
         pcRef.current = pc;
-
-        // Send only mic to host (host will mix)
         for (const track of stream.getTracks()) pc.addTrack(track, stream);
-
         pc.onicecandidate = (ev) => {
           if (ev.candidate) sock.emit('signal', { to: findHost(sock), data: { candidate: ev.candidate } });
         };
-
-        // Create offer and send to host via generic 'signal'
         const offer = await pc.createOffer({ offerToReceiveAudio: false });
         await pc.setLocalDescription(offer);
         sock.emit('signal', { to: findHost(sock), data: { sdp: pc.localDescription } });

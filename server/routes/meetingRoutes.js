@@ -9,14 +9,9 @@ const router = express.Router();
 const upload = multer({
   dest: path.join(process.cwd(), 'server', 'uploads')
 });
-
-// Create meeting
 router.post('/', authMiddleware, createMeeting);
-
-// End meeting
 router.post('/:roomId/end', authMiddleware, endMeeting);
 
-// Save recording (host uploads single mixed file)
 router.post('/:roomId/recording', authMiddleware, upload.single('audio'), async (req, res) => {
   const { roomId } = req.params;
   const [rows] = await pool.query('SELECT id FROM meetings WHERE room_id=?', [roomId]);
@@ -30,8 +25,6 @@ router.post('/:roomId/recording', authMiddleware, upload.single('audio'), async 
     'INSERT INTO recordings (meeting_id, file_path, mime_type) VALUES (?,?,?)',
     [meetingId, filePath, mimeType]
   );
-
-  // Transcribe with Deepgram
   let transcript = '';
   try {
     transcript = await transcribeFile(filePath, mimeType);

@@ -13,17 +13,15 @@ export async function transcribeFile(filePath) {
     let transcript = "";
 
     ws.on('open', () => {
-      // Read file and stream to Deepgram
       const stream = fs.createReadStream(filePath);
       stream.on('data', chunk => ws.send(chunk));
-      stream.on('end', () => ws.send(Buffer.from([]))); // end of stream
+      stream.on('end', () => ws.send(Buffer.from([])));
     });
 
     ws.on('message', (message) => {
       try {
         const msg = JSON.parse(message.toString());
         if (msg.is_final) {
-          // Concatenate transcript chunks
           transcript += (msg.channel?.alternatives?.[0]?.transcript || "") + " ";
         }
       } catch (err) {
