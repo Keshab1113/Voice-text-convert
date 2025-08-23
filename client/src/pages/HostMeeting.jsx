@@ -14,7 +14,7 @@ export default function HostMeeting() {
   const [requests, setRequests] = useState([]);
   const [recording, setRecording] = useState(false);
   const [participantCount, setParticipantCount] = useState(0);
-  
+
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
   const peersRef = useRef(new Map());
@@ -74,6 +74,7 @@ export default function HostMeeting() {
           if (!pc) {
             pc = new RTCPeerConnection({ iceServers: ICE });
             pc.ontrack = (e) => {
+              console.log("Host received track from guest:", e.streams[0]);
               if (e.streams && e.streams[0]) {
                 if (addRemoteRef.current) {
                   addRemoteRef.current(e.streams[0]);
@@ -98,7 +99,10 @@ export default function HostMeeting() {
               offerToReceiveVideo: false,
             });
             await pc.setLocalDescription(answer);
-            sock.emit("signal", { to: from, data: { sdp: pc.localDescription } });
+            sock.emit("signal", {
+              to: from,
+              data: { sdp: pc.localDescription },
+            });
           } else if (data.candidate) {
             try {
               await pc.addIceCandidate(data.candidate);
@@ -138,10 +142,11 @@ export default function HostMeeting() {
           }
         };
         mediaRecorderRef.current = mr;
-
       } catch (error) {
         console.error("Error initializing meeting:", error);
-        alert("Error starting meeting. Please check your microphone permissions.");
+        alert(
+          "Error starting meeting. Please check your microphone permissions."
+        );
       }
     };
 
@@ -155,7 +160,10 @@ export default function HostMeeting() {
           socketRef.current = null;
         }
         // Stop all media tracks
-        if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+        if (
+          mediaRecorderRef.current &&
+          mediaRecorderRef.current.state === "recording"
+        ) {
           mediaRecorderRef.current.stop();
         }
         // Close all peer connections
@@ -189,7 +197,10 @@ export default function HostMeeting() {
   };
 
   const stopRec = () => {
-    if (mediaRecorderRef.current && mediaRecorderRef.current.state === "recording") {
+    if (
+      mediaRecorderRef.current &&
+      mediaRecorderRef.current.state === "recording"
+    ) {
       mediaRecorderRef.current.stop();
       setRecording(false);
     }

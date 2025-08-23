@@ -43,8 +43,13 @@ export default function JoinMeeting() {
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: true,
         });
+        console.log("Guest audio tracks:", stream.getAudioTracks());
         const pc = new RTCPeerConnection({ iceServers: ICE });
         pcRef.current = pc;
+        for (const track of stream.getTracks()) {
+          console.log("Adding track:", track.kind, track.id);
+          pc.addTrack(track, stream);
+        }
 
         // Add this to handle incoming audio (though guest shouldn't receive audio)
         pc.ontrack = (event) => {
