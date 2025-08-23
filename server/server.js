@@ -8,7 +8,8 @@ import meetingRoutes from './routes/meetingRoutes.js';
 import pool from './db.js';
 
 const app = express();
-app.use(cors({ origin: process.env.CLIENT_ORIGIN, credentials: true }));
+// app.use(cors({ origin: process.env.CLIENT_ORIGIN, credentials: true }));
+app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 app.use('/api/auth', authRoutes);
