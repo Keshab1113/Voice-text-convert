@@ -22,9 +22,19 @@ export default function HostMeeting() {
 
   useEffect(() => {
     if (!socketRef.current) return;
-    socketRef.current.on("room:count", ({ count }) => {
+
+    const handleRoomCount = ({ count }) => {
       setParticipantCount(count);
-    });
+      console.log("participantCount: ", count);
+    };
+
+    socketRef.current.on("room:count", handleRoomCount);
+
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.off("room:count", handleRoomCount);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -53,7 +63,11 @@ export default function HostMeeting() {
         if (!pc) {
           pc = new RTCPeerConnection({ iceServers: ICE });
           pc.ontrack = (e) => {
-            if (addRemoteRef.current) addRemoteRef.current(e.streams[0]);
+            if (e.streams && e.streams[0]) {
+              if (addRemoteRef.current) {
+                addRemoteRef.current(e.streams[0]);
+              }
+            }
           };
           peersRef.current.set(from, pc);
           pc.onicecandidate = (ev) => {
@@ -67,15 +81,17 @@ export default function HostMeeting() {
 
         if (data.sdp) {
           await pc.setRemoteDescription(data.sdp);
-          const answer = await pc.createAnswer();
+          const answer = await pc.createAnswer({
+            offerToReceiveAudio: true, // Add this
+            offerToReceiveVideo: false,
+          });
           await pc.setLocalDescription(answer);
           sock.emit("signal", { to: from, data: { sdp: pc.localDescription } });
         } else if (data.candidate) {
           try {
             await pc.addIceCandidate(data.candidate);
-          } catch(error) {
-            console.log("Error in HostMeeting.jsx: ",error);
-            
+          } catch (error) {
+            console.log("Error in HostMeeting.jsx: ", error);
           }
         }
       });

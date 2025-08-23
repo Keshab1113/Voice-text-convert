@@ -24,7 +24,7 @@ const rooms = new Map();
 
 io.on("connection", (socket) => {
   socket.on("host:join-room", ({ roomId }) => {
-    rooms.set(roomId, { hostSocketId: socket.id, peers: new Set() });
+    rooms.set(roomId, { hostSocketId: socket.id, peers: new Map() });
     socket.join(roomId);
   });
 
@@ -32,7 +32,10 @@ io.on("connection", (socket) => {
     const room = rooms.get(roomId);
     if (!room) return socket.emit("guest:denied", { reason: "Room not found" });
     socket.join(roomId);
-    room.peers.add({ socketId: socket.id, name, deviceLabel });
+
+    // Fix: Use Map.set() instead of Set.add()
+    room.peers.set(socket.id, { name, deviceLabel }); // Changed from .add()
+
     io.to(room.hostSocketId).emit("host:join-request", {
       socketId: socket.id,
       name,
@@ -54,9 +57,7 @@ io.on("connection", (socket) => {
           if (rows.length) {
             const meetingId = rows[0].id;
             const room = rooms.get(roomId);
-            const peerInfo = [...room.peers].find(
-              (p) => p.socketId === guestSocketId
-            );
+            const peerInfo = room.peers.get(guestSocketId); // Changed from [...room.peers].find()
             const name = peerInfo?.name || "Guest";
             const deviceLabel = peerInfo?.deviceLabel || "";
             await pool.query(
@@ -85,13 +86,17 @@ io.on("connection", (socket) => {
 
   socket.on("disconnecting", () => {
     for (const roomId of socket.rooms) {
+      if (roomId === socket.id) continue; // Skip the default room
+
       const room = rooms.get(roomId);
       if (!room) continue;
-      room.peers.forEach((peer) => {
-        if (peer.socketId === socket.id) room.peers.delete(peer);
-      });
-      io.to(room.hostSocketId).emit("room:count", { count: room.peers.size });
-      if (room && room.hostSocketId === socket.id) {
+
+      if (room.peers.has(socket.id)) {
+        room.peers.delete(socket.id);
+        io.to(room.hostSocketId).emit("room:count", { count: room.peers.size });
+      }
+
+      if (room.hostSocketId === socket.id) {
         io.to(roomId).emit("room:ended");
         rooms.delete(roomId);
       }
