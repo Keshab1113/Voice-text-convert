@@ -24,23 +24,53 @@ const rooms = new Map();
 
 io.on("connection", (socket) => {
   socket.on("host:join-room", ({ roomId }) => {
-    rooms.set(roomId, { hostSocketId: socket.id, peers: new Map() });
+    // Check if room already has a host
+    if (rooms.has(roomId)) {
+      const existingRoom = rooms.get(roomId);
+      // If this socket is not the current host, disconnect the previous host
+      if (existingRoom.hostSocketId !== socket.id) {
+        const previousHost = io.sockets.sockets.get(existingRoom.hostSocketId);
+        if (previousHost) {
+          previousHost.emit("host:replaced");
+          previousHost.leave(roomId);
+        }
+      }
+    }
+
+    // Create or update room
+    rooms.set(roomId, {
+      hostSocketId: socket.id,
+      peers: rooms.get(roomId)?.peers || new Map(),
+    });
+
     socket.join(roomId);
+    console.log(
+      `Host ${socket.id} joined room ${roomId}, total peers: ${
+        rooms.get(roomId).peers.size
+      }`
+    );
+
+    // Send current count to the new host
+    io.to(socket.id).emit("room:count", {
+      count: rooms.get(roomId).peers.size,
+    });
   });
 
   socket.on("guest:request-join", async ({ roomId, name, deviceLabel }) => {
+    console.log(`Guest ${socket.id} requesting to join room ${roomId}`);
     const room = rooms.get(roomId);
     if (!room) return socket.emit("guest:denied", { reason: "Room not found" });
     socket.join(roomId);
-
-    // Fix: Use Map.set() instead of Set.add()
-    room.peers.set(socket.id, { name, deviceLabel }); // Changed from .add()
+    room.peers.set(socket.id, { name, deviceLabel });
 
     io.to(room.hostSocketId).emit("host:join-request", {
       socketId: socket.id,
       name,
       deviceLabel,
     });
+    console.log(
+      `Emitting room:count to host ${room.hostSocketId}, count: ${room.peers.size}`
+    );
     io.to(room.hostSocketId).emit("room:count", { count: room.peers.size });
   });
 
