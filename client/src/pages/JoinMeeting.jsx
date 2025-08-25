@@ -57,8 +57,6 @@ export default function JoinMeeting() {
           // You might want to handle this if guest should hear other participants
         };
 
-        for (const track of stream.getTracks()) pc.addTrack(track, stream);
-
         pc.onicecandidate = (ev) => {
           if (ev.candidate && hostSocketIdRef.current) {
             sock.emit("signal", {
