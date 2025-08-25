@@ -2,7 +2,13 @@ import React, { useEffect, useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import io from "socket.io-client";
 import { API_BASE } from "../api";
-import { FaMicrophone, FaMicrophoneSlash, FaSpinner, FaCheckCircle, FaTimesCircle } from "react-icons/fa";
+import {
+  FaMicrophone,
+  FaMicrophoneSlash,
+  FaSpinner,
+  FaCheckCircle,
+  FaTimesCircle,
+} from "react-icons/fa";
 
 const ICE = [{ urls: "stun:stun.l.google.com:19302" }];
 
@@ -10,7 +16,7 @@ export default function JoinMeeting() {
   const { roomId } = useParams();
   const nav = useNavigate();
   const [status, setStatus] = useState("Requesting to join…");
-  const [statusType, setStatusType] = useState("info"); // info, success, error, loading
+  const [statusType, setStatusType] = useState("info");
   const [isMuted, setIsMuted] = useState(false);
   const socketRef = useRef(null);
   const pcRef = useRef(null);
@@ -21,7 +27,7 @@ export default function JoinMeeting() {
     const run = async () => {
       setStatus("Connecting to server…");
       setStatusType("loading");
-      
+
       const sock = io(API_BASE, { transports: ["websocket"] });
       socketRef.current = sock;
 
@@ -40,7 +46,6 @@ export default function JoinMeeting() {
       setStatus("Requesting to join room…");
       sock.emit("guest:request-join", { roomId, name: "Guest", deviceLabel });
 
-      // Listen for host socket ID from server
       sock.on("host:socket-id", ({ hostId }) => {
         console.log("Received host socket ID:", hostId);
         hostSocketIdRef.current = hostId;
@@ -51,29 +56,91 @@ export default function JoinMeeting() {
       sock.on("guest:approved", async () => {
         setStatus("Approved. Connecting audio…");
         setStatusType("success");
-        
+
         try {
           const stream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: false,
+              channelCount: 1,
+              sampleRate: 48000,
+              sampleSize: 16,
+            },
           });
+
           localStreamRef.current = stream;
-          
+
           console.log("Guest audio tracks:", stream.getAudioTracks());
-          const pc = new RTCPeerConnection({ iceServers: ICE });
+
+          const monitorAudioLevels = () => {
+            if (stream) {
+              try {
+                const audioContext = new AudioContext();
+                const analyser = audioContext.createAnalyser();
+                const source = audioContext.createMediaStreamSource(stream);
+                source.connect(analyser);
+
+                const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                analyser.getByteFrequencyData(dataArray);
+
+                const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+                console.log("Guest Audio level:", average);
+
+                if (average > 5) {
+                  console.log("🎤 GUEST IS SPEAKING! Audio detected.");
+                }
+
+                audioContext.close();
+              } catch (error) {
+                console.log("Audio level check error:", error);
+              }
+            }
+          };
+
+          const audioInterval = setInterval(monitorAudioLevels, 2000);
+
+          const audioContext = new AudioContext();
+          const source = audioContext.createMediaStreamSource(stream);
+          const destination = audioContext.createMediaStreamDestination();
+          source.connect(destination);
+
+          const silentSource = audioContext.createOscillator();
+          silentSource.frequency.setValueAtTime(0.1, audioContext.currentTime);
+          silentSource.connect(audioContext.destination);
+          silentSource.start();
+
+          const pc = new RTCPeerConnection({
+            iceServers: ICE,
+            sdpSemantics: "unified-plan",
+          });
+
           pcRef.current = pc;
-          
-          for (const track of stream.getTracks()) {
-            console.log("Adding track:", track.kind, track.id);
-            pc.addTrack(track, stream);
+
+          for (const track of destination.stream.getTracks()) {
+            console.log("Adding processed track:", track.id, "enabled:", track.enabled, "muted:", track.muted);
+            pc.addTrack(track, destination.stream);
           }
 
-          // Handle incoming audio
-          pc.ontrack = (event) => {
-            console.log("Guest received track:", event.streams[0]);
+          pc.onconnectionstatechange = () => {
+            console.log("Guest connection state:", pc.connectionState);
+          };
+
+          pc.oniceconnectionstatechange = () => {
+            console.log("Guest ICE connection state:", pc.iceConnectionState);
+          };
+
+          pc.onicegatheringstatechange = () => {
+            console.log("Guest ICE gathering state:", pc.iceGatheringState);
+          };
+
+          pc.onsignalingstatechange = () => {
+            console.log("Guest signaling state:", pc.signalingState);
           };
 
           pc.onicecandidate = (ev) => {
             if (ev.candidate && hostSocketIdRef.current) {
+              console.log("Sending ICE candidate to host");
               sock.emit("signal", {
                 to: hostSocketIdRef.current,
                 data: { candidate: ev.candidate },
@@ -85,17 +152,50 @@ export default function JoinMeeting() {
             offerToReceiveAudio: false,
             offerToReceiveVideo: false,
           });
-          await pc.setLocalDescription(offer);
+
+          const modifiedOffer = {
+            ...offer,
+            sdp: offer.sdp.replace(
+              /useinbandfec=1/g,
+              "useinbandfec=1; stereo=0; maxaveragebitrate=128000"
+            ),
+          };
+
+          await pc.setLocalDescription(modifiedOffer);
 
           if (hostSocketIdRef.current) {
+            console.log("Sending SDP offer to host");
             sock.emit("signal", {
               to: hostSocketIdRef.current,
               data: { sdp: pc.localDescription },
             });
           }
-          
-          setStatus("Connected to meeting");
+
+          setStatus("Connected to meeting - Speak now!");
           setStatusType("success");
+
+          const checkAudioLevels = () => {
+            if (stream) {
+              const audioContext = new AudioContext();
+              const analyser = audioContext.createAnalyser();
+              const source = audioContext.createMediaStreamSource(stream);
+              source.connect(analyser);
+
+              const dataArray = new Uint8Array(analyser.frequencyBinCount);
+              analyser.getByteFrequencyData(dataArray);
+
+              const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+              console.log("Audio level:", average);
+
+              if (average > 5) {
+                console.log("AUDIO DETECTED! Guest is speaking.");
+              }
+
+              audioContext.close();
+            }
+          };
+
+          setInterval(checkAudioLevels, 2000);
         } catch (error) {
           console.error("Error setting up audio:", error);
           setStatus("Error setting up audio. Please check microphone permissions.");
@@ -157,7 +257,7 @@ export default function JoinMeeting() {
           pcRef.current.close();
         }
         if (localStreamRef.current) {
-          localStreamRef.current.getTracks().forEach(track => track.stop());
+          localStreamRef.current.getTracks().forEach((track) => track.stop());
         }
         socketRef.current?.disconnect();
       } catch (error) {
@@ -169,8 +269,13 @@ export default function JoinMeeting() {
   const toggleMute = () => {
     if (localStreamRef.current) {
       const audioTracks = localStreamRef.current.getAudioTracks();
-      audioTracks.forEach(track => {
+      console.log("Toggling mute, current state:", isMuted);
+      console.log("Audio tracks:", audioTracks);
+
+      audioTracks.forEach((track) => {
+        console.log(`Track ${track.id} enabled before:`, track.enabled);
         track.enabled = !track.enabled;
+        console.log(`Track ${track.id} enabled after:`, track.enabled);
       });
       setIsMuted(!isMuted);
     }
@@ -209,7 +314,7 @@ export default function JoinMeeting() {
           <h1 className="text-xl font-semibold">Joining Meeting</h1>
           <p className="text-sm opacity-90">Room ID: {roomId}</p>
         </div>
-        
+
         <div className="p-6">
           <div className="flex items-center justify-center mb-6">
             <div className={`text-4xl mr-3 ${getStatusColor()}`}>
@@ -222,12 +327,14 @@ export default function JoinMeeting() {
 
           <div className="bg-gray-50 rounded-lg p-4 mb-6">
             <div className="flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">Microphone</span>
+              <span className="text-sm font-medium text-gray-700">
+                Microphone
+              </span>
               <button
                 onClick={toggleMute}
                 className={`flex items-center gap-2 px-4 py-2 rounded-full ${
-                  isMuted 
-                    ? "bg-red-100 text-red-700 hover:bg-red-200" 
+                  isMuted
+                    ? "bg-red-100 text-red-700 hover:bg-red-200"
                     : "bg-green-100 text-green-700 hover:bg-green-200"
                 } transition-colors`}
               >

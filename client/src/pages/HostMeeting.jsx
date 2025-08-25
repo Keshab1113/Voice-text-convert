@@ -40,6 +40,7 @@ export default function HostMeeting() {
   const individualRecordersRef = useRef(new Map());
   const individualChunksRef = useRef(new Map());
   const mixerRef = useRef(null);
+  const audioIntervalsRef = useRef(new Map());
 
   useEffect(() => {
     const t = localStorage.getItem("token");
@@ -48,19 +49,61 @@ export default function HostMeeting() {
   }, [nav]);
 
   const startIndividualRecording = (socketId, stream) => {
-    if (individualRecordersRef.current.has(socketId)) return; // FIX: prevent duplicate
-    const recorder = new MediaRecorder(stream, { mimeType: "audio/webm" });
-    const chunks = [];
+    console.log(`Starting recording for ${socketId}`);
+    console.log(`Stream tracks for ${socketId}:`, stream.getTracks());
+    console.log(`Stream active for ${socketId}:`, stream.active);
 
-    recorder.ondataavailable = (e) => {
-      if (e.data.size) chunks.push(e.data);
-    };
-    recorder.onstop = () => {
-      const blob = new Blob(chunks, { type: "audio/webm" });
-      individualChunksRef.current.set(socketId, blob);
-    };
-    recorder.start(1000);
-    individualRecordersRef.current.set(socketId, recorder);
+    stream.getTracks().forEach((track) => {
+      console.log(`Track ${track.id} enabled:`, track.enabled);
+      console.log(`Track ${track.id} readyState:`, track.readyState);
+      console.log(`Track ${track.id} muted:`, track.muted);
+    });
+
+    if (individualRecordersRef.current.has(socketId)) {
+      const existingRecorder = individualRecordersRef.current.get(socketId);
+      if (existingRecorder.state === "recording") {
+        console.log(`Stopping existing recorder for ${socketId}`);
+        existingRecorder.stop();
+      }
+      individualRecordersRef.current.delete(socketId);
+    }
+
+    try {
+      const recorder = new MediaRecorder(stream, {
+        mimeType: "audio/webm",
+        audioBitsPerSecond: 128000,
+      });
+
+      const chunks = [];
+
+      recorder.ondataavailable = (e) => {
+        console.log(`Data available for ${socketId}, size: ${e.data.size}`);
+        if (e.data.size > 0) {
+          chunks.push(e.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: "audio/webm" });
+        individualChunksRef.current.set(socketId, blob);
+        console.log(`Recording stopped for ${socketId}, blob size: ${blob.size}`);
+        console.log(`Chunks length for ${socketId}: ${chunks.length}`);
+      };
+
+      recorder.onerror = (e) => {
+        console.error(`Recording error for ${socketId}:`, e);
+      };
+
+      recorder.onstart = () => {
+        console.log(`Recording started for ${socketId}`);
+      };
+
+      recorder.start(1000);
+      individualRecordersRef.current.set(socketId, recorder);
+      console.log(`MediaRecorder started for ${socketId}, state: ${recorder.state}`);
+    } catch (error) {
+      console.error(`Error starting recorder for ${socketId}:`, error);
+    }
   };
 
   useEffect(() => {
@@ -71,6 +114,34 @@ export default function HostMeeting() {
       try {
         const mic = await navigator.mediaDevices.getUserMedia({ audio: true });
         localMicRef.current = mic;
+
+        const monitorHostAudio = () => {
+          if (mic) {
+            try {
+              const audioContext = new AudioContext();
+              const analyser = audioContext.createAnalyser();
+              const source = audioContext.createMediaStreamSource(mic);
+              source.connect(analyser);
+
+              const dataArray = new Uint8Array(analyser.frequencyBinCount);
+              analyser.getByteFrequencyData(dataArray);
+
+              const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+              console.log("Host Audio level:", average);
+
+              if (average > 5) {
+                console.log("🎤 HOST IS SPEAKING! Audio detected.");
+              }
+
+              audioContext.close();
+            } catch (error) {
+              console.log("Host audio level check error:", error);
+            }
+          }
+        };
+
+        const hostAudioInterval = setInterval(monitorHostAudio, 2000);
+        audioIntervalsRef.current.set('host', hostAudioInterval);
 
         const mixer = await createHostMixerStream(mic);
         mixerRef.current = mixer;
@@ -99,29 +170,61 @@ export default function HostMeeting() {
         sock.on("signal", async ({ from, data }) => {
           let pc = peersRef.current.get(from);
           if (!pc) {
-            pc = new RTCPeerConnection({ iceServers: ICE });
+            pc = new RTCPeerConnection({
+              iceServers: ICE,
+              sdpSemantics: "unified-plan",
+            });
 
-            // Store the remote stream when it becomes available
             const remoteStream = new MediaStream();
+
             pc.ontrack = (e) => {
               if (e.streams && e.streams[0]) {
                 console.log("Received remote track from:", from);
+                console.log("Track details:", e.track);
+                console.log("Track enabled:", e.track.enabled, "muted:", e.track.muted);
 
-                // Add all tracks from the remote stream to our local stream
                 e.streams[0].getTracks().forEach((track) => {
+                  console.log(`Adding track ${track.id} to remote stream`);
                   remoteStream.addTrack(track);
+
+                  track.onmute = () => console.log(`Track ${track.id} was muted!`);
+                  track.onunmute = () => console.log(`Track ${track.id} was unmuted!`);
+                  track.onended = () => console.log(`Track ${track.id} ended`);
                 });
 
-                addRemoteRef.current(remoteStream, from);
+                const monitorGuestAudio = () => {
+                  try {
+                    const audioContext = new AudioContext();
+                    const analyser = audioContext.createAnalyser();
+                    const source = audioContext.createMediaStreamSource(remoteStream);
+                    source.connect(analyser);
 
-                // Only start recording if we're currently recording
-                if (recording) {
-                  startIndividualRecording(from, remoteStream);
-                }
+                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                    analyser.getByteFrequencyData(dataArray);
+
+                    const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+                    console.log(`Audio level from guest ${from}:`, average);
+
+                    if (average > 5) {
+                      console.log(`🎤 GUEST ${from} IS SPEAKING! Audio received.`);
+                    }
+
+                    audioContext.close();
+                  } catch (error) {
+                    console.log("Guest audio level check error:", error);
+                  }
+                };
+
+                const guestAudioInterval = setInterval(monitorGuestAudio, 2000);
+                audioIntervalsRef.current.set(from, guestAudioInterval);
+
+                addRemoteRef.current(remoteStream, from);
+                startIndividualRecording(from, remoteStream.clone());
               }
             };
 
             peersRef.current.set(from, pc);
+
             pc.onicecandidate = (ev) => {
               if (ev.candidate) {
                 sock.emit("signal", {
@@ -130,17 +233,33 @@ export default function HostMeeting() {
                 });
               }
             };
+
+            pc.onconnectionstatechange = () => {
+              console.log(`Connection state for ${from}:`, pc.connectionState);
+            };
+
+            pc.oniceconnectionstatechange = () => {
+              console.log(`ICE connection state for ${from}:`, pc.iceConnectionState);
+            };
           }
 
           if (data.sdp) {
+            console.log(`Received SDP from ${from}`);
             await pc.setRemoteDescription(data.sdp);
-            const answer = await pc.createAnswer({ offerToReceiveAudio: true });
+
+            const answer = await pc.createAnswer({
+              offerToReceiveAudio: true,
+              offerToReceiveVideo: false,
+            });
+
             await pc.setLocalDescription(answer);
+
             sock.emit("signal", {
               to: from,
               data: { sdp: pc.localDescription },
             });
           } else if (data.candidate) {
+            console.log(`Received ICE candidate from ${from}`);
             try {
               await pc.addIceCandidate(data.candidate);
             } catch (error) {
@@ -186,8 +305,14 @@ export default function HostMeeting() {
       );
       peersRef.current.forEach((pc) => pc.close());
       peersRef.current.clear();
+
+      audioIntervalsRef.current.forEach((interval, socketId) => {
+        clearInterval(interval);
+        console.log(`Cleared audio monitoring for ${socketId}`);
+      });
+      audioIntervalsRef.current.clear();
     };
-  }, [roomId, nav]); // FIX: removed `recording` dependency
+  }, [roomId, nav]);
 
   const startRec = () => {
     if (!mediaRecorderRef.current) return;
@@ -199,28 +324,20 @@ export default function HostMeeting() {
     setRecording(true);
     setShowPreview(false);
 
-    // Start recording host mic
     if (localMicRef.current) {
       startIndividualRecording("host", localMicRef.current);
     }
 
-    // Start recording all existing guest connections
     peersRef.current.forEach((pc, socketId) => {
-      // For each peer connection, we need to get their audio stream
-      // This assumes you have a way to access the received streams
-      const receiverStreams = pc
-        .getReceivers()
-        .map((receiver) =>
-          receiver.track ? new MediaStream([receiver.track]) : null
-        )
-        .filter((stream) => stream !== null);
+      const remoteStream = new MediaStream();
+      pc.getReceivers().forEach((receiver) => {
+        if (receiver.track) {
+          remoteStream.addTrack(receiver.track);
+        }
+      });
 
-      if (receiverStreams.length > 0) {
-        const combinedStream = new MediaStream();
-        receiverStreams.forEach((stream) => {
-          stream.getTracks().forEach((track) => combinedStream.addTrack(track));
-        });
-        startIndividualRecording(socketId, combinedStream);
+      if (remoteStream.getAudioTracks().length > 0) {
+        startIndividualRecording(socketId, remoteStream);
       }
     });
   };
@@ -229,9 +346,13 @@ export default function HostMeeting() {
     if (mediaRecorderRef.current?.state === "recording") {
       mediaRecorderRef.current.stop();
       setRecording(false);
-      individualRecordersRef.current.forEach(
-        (r) => r.state === "recording" && r.stop()
-      );
+
+      individualRecordersRef.current.forEach((recorder, socketId) => {
+        if (recorder.state === "recording") {
+          recorder.stop();
+          console.log(`Stopped recorder for ${socketId}`);
+        }
+      });
     }
   };
 
@@ -265,9 +386,14 @@ export default function HostMeeting() {
 
   const toggleMute = () => {
     if (localMicRef.current) {
-      localMicRef.current
-        .getAudioTracks()
-        .forEach((t) => (t.enabled = !t.enabled));
+      const audioTracks = localMicRef.current.getAudioTracks();
+      console.log("Toggling mute, current state:", isMuted);
+
+      audioTracks.forEach((track) => {
+        console.log(`Track ${track.id} enabled before:`, track.enabled);
+        track.enabled = !isMuted;
+        console.log(`Track ${track.id} enabled after:`, track.enabled);
+      });
       setIsMuted(!isMuted);
     }
   };
@@ -338,7 +464,6 @@ export default function HostMeeting() {
                   Recording Previews
                 </h3>
 
-                {/* Mixed recording */}
                 <div className="mb-4">
                   <h4 className="font-medium text-gray-600 mb-1">
                     Mixed Audio
@@ -350,7 +475,6 @@ export default function HostMeeting() {
                   />
                 </div>
 
-                {/* Individual recordings */}
                 <div>
                   <h4 className="font-medium text-gray-600 mb-2">
                     Individual Recordings
