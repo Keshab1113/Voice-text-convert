@@ -28,6 +28,8 @@ export default function HostMeeting() {
   const [uploading, setUploading] = useState(false);
   const [captions, setCaptions] = useState([]);
   const [showCaptions, setShowCaptions] = useState(false);
+  const [transcript, setTranscript] = useState("");
+  const [showEndButton, setShowEndButton] = useState(false);
 
   const mediaRecorderRef = useRef(null);
   const recordedChunksRef = useRef([]);
@@ -86,7 +88,9 @@ export default function HostMeeting() {
       recorder.onstop = () => {
         const blob = new Blob(chunks, { type: "audio/webm" });
         individualChunksRef.current.set(socketId, blob);
-        console.log(`Recording stopped for ${socketId}, blob size: ${blob.size}`);
+        console.log(
+          `Recording stopped for ${socketId}, blob size: ${blob.size}`
+        );
         console.log(`Chunks length for ${socketId}: ${chunks.length}`);
       };
 
@@ -100,7 +104,9 @@ export default function HostMeeting() {
 
       recorder.start(1000);
       individualRecordersRef.current.set(socketId, recorder);
-      console.log(`MediaRecorder started for ${socketId}, state: ${recorder.state}`);
+      console.log(
+        `MediaRecorder started for ${socketId}, state: ${recorder.state}`
+      );
     } catch (error) {
       console.error(`Error starting recorder for ${socketId}:`, error);
     }
@@ -126,7 +132,8 @@ export default function HostMeeting() {
               const dataArray = new Uint8Array(analyser.frequencyBinCount);
               analyser.getByteFrequencyData(dataArray);
 
-              const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+              const average =
+                dataArray.reduce((a, b) => a + b) / dataArray.length;
               console.log("Host Audio level:", average);
 
               if (average > 5) {
@@ -141,7 +148,7 @@ export default function HostMeeting() {
         };
 
         const hostAudioInterval = setInterval(monitorHostAudio, 2000);
-        audioIntervalsRef.current.set('host', hostAudioInterval);
+        audioIntervalsRef.current.set("host", hostAudioInterval);
 
         const mixer = await createHostMixerStream(mic);
         mixerRef.current = mixer;
@@ -181,14 +188,21 @@ export default function HostMeeting() {
               if (e.streams && e.streams[0]) {
                 console.log("Received remote track from:", from);
                 console.log("Track details:", e.track);
-                console.log("Track enabled:", e.track.enabled, "muted:", e.track.muted);
+                console.log(
+                  "Track enabled:",
+                  e.track.enabled,
+                  "muted:",
+                  e.track.muted
+                );
 
                 e.streams[0].getTracks().forEach((track) => {
                   console.log(`Adding track ${track.id} to remote stream`);
                   remoteStream.addTrack(track);
 
-                  track.onmute = () => console.log(`Track ${track.id} was muted!`);
-                  track.onunmute = () => console.log(`Track ${track.id} was unmuted!`);
+                  track.onmute = () =>
+                    console.log(`Track ${track.id} was muted!`);
+                  track.onunmute = () =>
+                    console.log(`Track ${track.id} was unmuted!`);
                   track.onended = () => console.log(`Track ${track.id} ended`);
                 });
 
@@ -196,17 +210,23 @@ export default function HostMeeting() {
                   try {
                     const audioContext = new AudioContext();
                     const analyser = audioContext.createAnalyser();
-                    const source = audioContext.createMediaStreamSource(remoteStream);
+                    const source =
+                      audioContext.createMediaStreamSource(remoteStream);
                     source.connect(analyser);
 
-                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                    const dataArray = new Uint8Array(
+                      analyser.frequencyBinCount
+                    );
                     analyser.getByteFrequencyData(dataArray);
 
-                    const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+                    const average =
+                      dataArray.reduce((a, b) => a + b) / dataArray.length;
                     console.log(`Audio level from guest ${from}:`, average);
 
                     if (average > 5) {
-                      console.log(`🎤 GUEST ${from} IS SPEAKING! Audio received.`);
+                      console.log(
+                        `🎤 GUEST ${from} IS SPEAKING! Audio received.`
+                      );
                     }
 
                     audioContext.close();
@@ -239,7 +259,10 @@ export default function HostMeeting() {
             };
 
             pc.oniceconnectionstatechange = () => {
-              console.log(`ICE connection state for ${from}:`, pc.iceConnectionState);
+              console.log(
+                `ICE connection state for ${from}:`,
+                pc.iceConnectionState
+              );
             };
           }
 
@@ -357,30 +380,33 @@ export default function HostMeeting() {
   };
 
   const uploadRecording = async () => {
-    if (!recordingBlobRef.current && individualChunksRef.current.size === 0)
-      return;
+    if (!recordingBlobRef.current) return;
     setUploading(true);
     try {
       const formData = new FormData();
-      if (recordingBlobRef.current)
-        formData.append("mixed", recordingBlobRef.current, "mixed.webm");
-      individualChunksRef.current.forEach((b, id) => {
-        formData.append(
-          "individuals",
-          b,
-          id === "host" ? "host.webm" : `guest_${id}.webm`
-        );
-      });
-      await api.post(`/meetings/${roomId}/recordings`, formData, {
+      formData.append("mixed", recordingBlobRef.current, "mixed.webm");
+      const res = await api.post(`/meetings/${roomId}/recording`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
-      await api.post(`/meetings/${roomId}/end`);
-      alert("Recordings uploaded.");
-      nav("/dashboard");
-    } catch {
-      alert("Error uploading recordings.");
+      setTranscript(res.data.transcript || "");
+      setShowEndButton(true);
+      alert("Recording uploaded successfully.");
+    } catch (err) {
+      console.error("Error uploading recordings:", err);
+      alert("Error uploading recording.");
     } finally {
       setUploading(false);
+    }
+  };
+
+  const endMeeting = async () => {
+    try {
+      await api.post(`/meetings/${roomId}/end`);
+      alert("Meeting ended successfully.");
+      nav("/dashboard");
+    } catch (err) {
+      console.error("Error ending meeting:", err);
+      alert("Error ending meeting.");
     }
   };
 
@@ -531,6 +557,22 @@ export default function HostMeeting() {
                   ))}
                 </div>
               </div>
+            )}
+
+            {transcript && (
+              <div className="mt-4 p-3 border rounded bg-gray-100">
+                <h3 className="font-bold mb-2">Transcript:</h3>
+                <p>{transcript}</p>
+              </div>
+            )}
+
+            {showEndButton && (
+              <button
+                onClick={endMeeting}
+                className="mt-4 bg-red-500 text-white px-4 py-2 rounded"
+              >
+                End Meeting
+              </button>
             )}
           </div>
         </div>
