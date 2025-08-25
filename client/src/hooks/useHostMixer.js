@@ -2,29 +2,73 @@ export async function createHostMixerStream(localMic) {
   const audioCtx = new AudioContext();
   const dest = audioCtx.createMediaStreamDestination();
   
+  const connectedStreams = new Map(); // socketId -> { stream, source, gainNode }
+
+  // Add host microphone
   if (localMic) {
-    const src = audioCtx.createMediaStreamSource(localMic);
-    src.connect(dest);
+    try {
+      const src = audioCtx.createMediaStreamSource(localMic);
+      const gainNode = audioCtx.createGain();
+      gainNode.gain.value = 1.0;
+      
+      src.connect(gainNode).connect(dest);
+      connectedStreams.set('host', { 
+        stream: localMic, 
+        source: src, 
+        gainNode 
+      });
+    } catch (err) {
+      console.error("Error connecting host mic:", err);
+    }
   }
 
-  const addRemote = (remoteStream) => {
-    console.log("Adding remote stream to mixer:", remoteStream.id);
-    
-    // Check if the remote stream has audio tracks
-    const audioTracks = remoteStream.getAudioTracks();
-    if (audioTracks.length === 0) {
-      console.warn("Remote stream has no audio tracks");
-      return;
-    }
+  const addRemote = (remoteStream, socketId) => {
+    if (!remoteStream || connectedStreams.has(socketId)) return;
 
     try {
-      const remoteSource = audioCtx.createMediaStreamSource(remoteStream);
-      remoteSource.connect(dest);
-      console.log("Remote audio connected to mixer");
+      const src = audioCtx.createMediaStreamSource(remoteStream);
+      const gainNode = audioCtx.createGain();
+      gainNode.gain.value = 1.0;
+
+      src.connect(gainNode).connect(dest);
+      connectedStreams.set(socketId, { 
+        stream: remoteStream, 
+        source: src, 
+        gainNode 
+      });
     } catch (error) {
-      console.error("Error adding remote stream to mixer:", error);
+      console.error("Error adding remote stream:", error);
     }
   };
 
-  return { mixedStream: dest.stream, addRemote };
+  const removeRemote = (socketId) => {
+    const streamInfo = connectedStreams.get(socketId);
+    if (streamInfo) {
+      try {
+        streamInfo.source.disconnect();
+        connectedStreams.delete(socketId);
+      } catch (error) {
+        console.error("Error removing remote stream:", error);
+      }
+    }
+  };
+
+  const getIndividualStreams = () => {
+    const streams = new Map();
+    connectedStreams.forEach((info, socketId) => {
+      // Create individual destinations for each stream
+      const individualDest = audioCtx.createMediaStreamDestination();
+      info.source.connect(info.gainNode).connect(individualDest);
+      streams.set(socketId, individualDest.stream);
+    });
+    return streams;
+  };
+
+  return { 
+    mixedStream: dest.stream, 
+    addRemote, 
+    removeRemote,
+    getIndividualStreams,
+    audioContext: audioCtx 
+  };
 }
