@@ -18,7 +18,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="h-[92vh] bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 flex items-center justify-center p-6">
+    <div className="min-h-screen h-[92vh] bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-800 flex items-center justify-center p-6">
       <div className="relative max-w-md w-full">
         <div className="bg-white/10 backdrop-blur-lg border border-white/20 rounded-2xl shadow-2xl overflow-hidden">
           <div className="bg-gradient-to-r from-white/20 to-white/10 p-8">

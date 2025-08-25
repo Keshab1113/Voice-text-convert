@@ -25,7 +25,7 @@ const Header = () => {
   };
 
   return (
-    <header className="relative p-4 bg-gradient-to-r from-purple-600 via-pink-500 to-orange-400 shadow-lg h-[8vh]">
+    <header className="relative p-4 bg-gradient-to-r from-purple-600 via-pink-500 to-orange-400 shadow-lg h-[5rem]">
       <div className="absolute inset-0 bg-white/10 backdrop-blur-sm"></div>
       <div className="absolute top-0 left-0 w-full h-full overflow-hidden">
         <div className="absolute -top-1 -left-1 w-8 h-8 bg-white/20 rounded-full animate-pulse"></div>

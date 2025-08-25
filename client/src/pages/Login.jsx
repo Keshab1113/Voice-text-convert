@@ -25,7 +25,7 @@ export default function Login() {
   };
 
   return (
-    <div className=" h-[92vh] bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
+    <div className=" min-h-screen h-full py-10 bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black opacity-20"></div>
       <div className="relative z-10 w-full max-w-md">
         <div className="bg-white/10 backdrop-blur-lg border border-white/20 rounded-3xl p-8 shadow-2xl">
@@ -89,7 +89,12 @@ export default function Login() {
               onClick={submit}
               className="w-full bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600 text-white font-semibold py-4 rounded-2xl transition-all duration-300 transform hover:scale-[1.02] hover:shadow-lg focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 focus:ring-offset-transparent"
             >
-              {isRegister ? "Create Account" : "Sign In"}
+              {!isRegister ? isProcess
+                    ? "Processing..."
+                    : "Sign In"
+                  : isProcess
+                  ? "Processing..."
+                  : "Sign Up"}
             </button>
           </div>
 
@@ -103,13 +108,7 @@ export default function Login() {
                 ? "Already have an account? "
                 : "Don't have an account? "}
               <span className="font-semibold text-purple-300 hover:text-purple-200">
-                {isRegister
-                  ? isProcess
-                    ? "Processing..."
-                    : "Sign In"
-                  : isProcess
-                  ? "Processing..."
-                  : "Sign Up"}
+                {isRegister ? "Sign In" : "Sign Up"}
               </span>
             </button>
           </div>
